@@ -19,15 +19,17 @@ import {
 } from '@garfish/utils';
 import { Garfish } from '../garfish';
 import { interfaces } from '../interface';
-import SubAppObserver from '../plugins/performance/subAppObserver';
+import { appLifecycle } from '../hooks/lifecycle';
+import { SubAppObserver } from '../plugins/performance/subAppObserver';
 
+/** @deprecated */
 export type CustomerLoader = (
   provider: interfaces.Provider,
   appInfo: interfaces.AppInfo,
   path: string,
 ) => Promise<interfaces.LoaderResult | void> | interfaces.LoaderResult | void;
 
-export type AppInterface = App;
+export type AppInfo = interfaces.AppInfo & { domGetter: Element };
 
 const __GARFISH_EXPORTS__ = '__GARFISH_EXPORTS__';
 const __GARFISH_GLOBAL_ENV__ = '__GARFISH_GLOBAL_ENV__';
@@ -54,9 +56,11 @@ export class App {
   public cjsModules: Record<string, any>;
   public htmlNode: HTMLElement | ShadowRoot;
   public customExports: Record<string, any> = {}; // If you don't want to use the CJS export, can use this
+  public appInfo: AppInfo;
+  public hooks: interfaces.AppHooks;
   public provider: interfaces.Provider;
-  public appInfo: interfaces.AppInfo;
   public entryManager: TemplateManager;
+  /** @deprecated */
   public customLoader: CustomerLoader;
   public appPerformance: SubAppObserver;
 
@@ -70,21 +74,20 @@ export class App {
 
   constructor(
     context: Garfish,
-    appInfo: interfaces.AppInfo,
+    appInfo: AppInfo,
     entryManager: TemplateManager,
     resources: interfaces.ResourceModules,
     isHtmlMode: boolean,
     customLoader: CustomerLoader,
   ) {
     this.context = context;
-    // Get app container dom
     this.appInfo = appInfo;
     this.name = appInfo.name;
     this.resources = resources;
     this.isHtmlMode = isHtmlMode;
     this.entryManager = entryManager;
 
-    // garfish environment variables
+    // Garfish environment variables
     this.globalEnvVariables = {
       currentApp: this,
       loader: context.loader,
@@ -101,6 +104,10 @@ export class App {
     };
     this.cjsModules.module = this.cjsModules;
     this.customLoader = customLoader;
+
+    // Register hooks
+    this.hooks = appLifecycle();
+    this.hooks.usePlugin(appInfo);
 
     // Save all the resources to address
     const nodes = entryManager.getNodesByTagName(...sourceListTags);
@@ -135,28 +142,16 @@ export class App {
       ...this.getExecScriptEnv(options?.noEntry),
     };
 
-    this.context.hooks.lifecycle.beforeEval.call(
-      this.appInfo,
-      code,
-      env,
-      url,
-      options,
-    );
+    this.hooks.lifecycle.beforeEval.emit(this.appInfo, code, env, url, options);
 
     try {
       this.runCode(code, env, url, options);
     } catch (e) {
-      this.context.hooks.lifecycle.errorExecCode.call(e, this.appInfo);
+      this.hooks.lifecycle.errorExecCode.emit(e, this.appInfo);
       throw e;
     }
 
-    this.context.hooks.lifecycle.afterEval.call(
-      this.appInfo,
-      code,
-      env,
-      url,
-      options,
-    );
+    this.hooks.lifecycle.afterEval.emit(this.appInfo, code, env, url, options);
   }
 
   // `vm sandbox` can override this method
@@ -211,7 +206,7 @@ export class App {
 
   async mount() {
     if (!this.canMount()) return false;
-    this.context.hooks.lifecycle.beforeMount.call(this.appInfo, this);
+    this.hooks.lifecycle.beforeMount.emit(this.appInfo, this);
 
     this.active = true;
     this.mounting = true;
@@ -228,13 +223,13 @@ export class App {
       this.display = true;
       this.mounted = true;
       this.context.activeApps.push(this);
-      this.context.hooks.lifecycle.afterMount.call(this.appInfo, this);
+      this.hooks.lifecycle.afterMount.emit(this.appInfo, this);
 
       await asyncJsProcess;
       if (!this.stopMountAndClearEffect()) return false;
     } catch (err) {
       this.entryManager.DOMApis.removeElement(this.appContainer);
-      this.context.hooks.lifecycle.errorMountApp.call(err, this.appInfo);
+      this.hooks.lifecycle.errorMountApp.emit(err, this.appInfo);
       return false;
     } finally {
       this.mounting = false;
@@ -253,18 +248,18 @@ export class App {
     }
     // This prevents the unmount of the current app from being called in "provider.destroy"
     this.unmounting = true;
-    this.context.hooks.lifecycle.beforeUnMount.call(this.appInfo, this);
+    this.hooks.lifecycle.beforeUnmount.emit(this.appInfo, this);
 
     try {
       this.callDestroy(this.provider, true);
       this.display = false;
       this.mounted = false;
       remove(this.context.activeApps, this);
-      this.context.hooks.lifecycle.afterUnMount.call(this.appInfo, this);
+      this.hooks.lifecycle.afterUnmount.emit(this.appInfo, this);
     } catch (err) {
       remove(this.context.activeApps, this);
       this.entryManager.DOMApis.removeElement(this.appContainer);
-      this.context.hooks.lifecycle.errorUnmountApp.call(err, this.appInfo);
+      this.hooks.lifecycle.errorUnmountApp.emit(err, this.appInfo);
       return false;
     } finally {
       this.unmounting = false;
@@ -308,10 +303,7 @@ export class App {
                   },
                 );
               } catch (err) {
-                this.context.hooks.lifecycle.errorMountApp.call(
-                  err,
-                  this.appInfo,
-                );
+                this.hooks.lifecycle.errorMountApp.emit(err, this.appInfo);
               }
             }
           }
@@ -385,8 +377,8 @@ export class App {
   // Create a container node and add in the document flow
   // domGetter Have been dealing with
   private addContainer() {
-    if (typeof (this.appInfo.domGetter as Element).appendChild === 'function') {
-      (this.appInfo.domGetter as Element).appendChild(this.appContainer);
+    if (typeof this.appInfo.domGetter.appendChild === 'function') {
+      this.appInfo.domGetter.appendChild(this.appContainer);
     }
   }
 
@@ -554,10 +546,8 @@ export class App {
     }
 
     // If you have customLoader, the dojo.provide by user
-    const hookRes =
-      (await this.customLoader) &&
-      this.customLoader(provider, appInfo, basename);
-
+    const customLoader = await this.customLoader;
+    const hookRes = customLoader?.(provider, appInfo, basename);
     if (hookRes) {
       const { mount, unmount } = hookRes || ({} as any);
       if (typeof mount === 'function' && typeof unmount === 'function') {
@@ -568,7 +558,7 @@ export class App {
       }
     }
 
-    assert(provider, `"provider" is "${typeof provider}".`);
+    assert(provider, `"provider" is "${provider}".`);
     // No need to use "hasOwn", because "render" may be on the prototype chain
     assert('render' in provider, '"render" is required in provider.');
     assert('destroy' in provider, '"destroy" is required in provider.');

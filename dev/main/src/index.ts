@@ -1,5 +1,5 @@
 /// <reference types="cypress" />
-import GarfishInstance, { interfaces } from 'garfish';
+import GarfishInstance from 'garfish';
 import { Config } from './config';
 
 GarfishInstance.run(Config);
@@ -31,3 +31,20 @@ document.getElementById('reactBtn').onclick = async () => {
     await prevApp.mount();
   }
 };
+
+// Plugin test
+const hooks = GarfishInstance.createPluginSystem(({ SyncHook, AsyncHook }) => {
+  return {
+    create: new AsyncHook<[number], string>(),
+  };
+});
+
+hooks.usePlugin({
+  name: 'test',
+  create(a) {
+    console.log(a);
+    return '';
+  },
+});
+
+hooks.lifecycle.create.emit(123);

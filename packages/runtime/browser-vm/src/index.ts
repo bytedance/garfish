@@ -1,7 +1,8 @@
 import { interfaces } from '@garfish/core';
+import type * as Hooks from '@garfish/hooks';
 import { warn, isPlainObject } from '@garfish/utils';
-import { Sandbox } from './sandbox';
 import { Module, SandboxOptions } from './types';
+import { Sandbox } from './sandbox';
 export { Sandbox } from './sandbox';
 
 // export declare module
@@ -27,7 +28,7 @@ declare module '@garfish/core' {
     export interface Config {
       protectVariable?: PropertyKey[];
       insulationVariable?: PropertyKey[];
-      sandbox?: SandboxConfig | false;
+      sandbox?: false | SandboxConfig;
     }
 
     export interface App {
@@ -36,6 +37,10 @@ declare module '@garfish/core' {
 
     export interface Plugin {
       openVm?: boolean;
+    }
+
+    export interface Plugins {
+      'browser-vm': ReturnType<typeof createVMSandboxHooks>;
     }
   }
 }
@@ -63,6 +68,12 @@ const compatibleOldModulesType = (modules): Array<Module> => {
   return [];
 };
 
+const createVMSandboxHooks = (Garfish: interfaces.Garfish) => {
+  return Garfish.createPluginSystem(({ SyncHook }) => ({
+    create: new SyncHook<[number], void>(),
+  }));
+};
+
 // Default export Garfish plugin
 export default function BrowserVm() {
   return function (Garfish: interfaces.Garfish): interfaces.Plugin {
@@ -80,9 +91,12 @@ export default function BrowserVm() {
       if (key in global) global[key] = value;
     };
 
+    const hooks = createVMSandboxHooks(Garfish);
     // Use the default Garfish instance attributes
     let config: Partial<SandboxOptions> = { openSandbox: true };
+
     const options: interfaces.Plugin = {
+      hooks,
       openVm: true,
       name: 'browser-vm',
       version: __VERSION__,
@@ -134,15 +148,9 @@ export default function BrowserVm() {
             },
           });
 
-          appInstance.vmSandbox = sandbox;
-          appInstance.global = sandbox.global;
           const originExecScript = sandbox.execScript;
-
-          // Rewrite `app.runCode`
-          appInstance.runCode = (...args) =>
-            originExecScript.call(sandbox, ...args);
-          sandbox.execScript = (code, env, url, options) =>
-            originExecScript.call(
+          sandbox.execScript = (code, env, url, options) => {
+            return originExecScript.call(
               sandbox,
               code,
               {
@@ -153,18 +161,24 @@ export default function BrowserVm() {
               url,
               options,
             );
+          };
 
+          appInstance.vmSandbox = sandbox;
+          appInstance.global = sandbox.global;
+          // Rewrite `app.runCode`
+          appInstance.runCode = (...args) => {
+            return originExecScript.apply(sandbox, args);
+          };
           // Use sandbox document
           if (appInstance.entryManager.DOMApis) {
             appInstance.entryManager.DOMApis.document = sandbox.global.document;
           }
-
           // Use `Garfish.loader` instead of the `sandbox.loader`
           sandbox.loader = Garfish.loader;
         }
       },
 
-      afterUnMount(appInfo, appInstance) {
+      afterUnmount(appInfo, appInstance) {
         if (appInstance.vmSandbox) {
           // If the app is uninstalled, the sandbox needs to clear all effects and then reset
           appInstance.vmSandbox.reset();

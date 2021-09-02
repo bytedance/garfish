@@ -365,7 +365,7 @@ export function setDocCurrentScript(
   return () => set(null);
 }
 
-export function __extends(d, b) {
+export function _extends(d, b) {
   Object.setPrototypeOf(d, b);
 
   function fNOP() {
@@ -380,8 +380,17 @@ export function __extends(d, b) {
   }
 }
 
-export function isFunction(what: unknown): what is Function {
-  return typeof what === 'function';
+export function mapObject(
+  obj: Record<PropertyKey, any>,
+  fn: (key: PropertyKey, val: any) => any,
+) {
+  const destObject = {};
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      destObject[key] = fn(key, obj[key]);
+    }
+  }
+  return destObject;
 }
 
 export const hookObjectProperty = <
@@ -402,12 +411,12 @@ export const hookObjectProperty = <
     let hooked = hookedUnsafe;
 
     // To method packages a layer of a try after all the hooks to catch
-    if (isFunction(hooked)) {
+    if (typeof hooked === 'function') {
       hooked = (function (this: any, ...args: any) {
         try {
           return (hookedUnsafe as any).apply(this, args);
         } catch {
-          return isFunction(origin) && origin.apply(this, args);
+          return typeof origin === 'function' && origin.apply(this, args);
         }
       } as any) as T[K];
     }

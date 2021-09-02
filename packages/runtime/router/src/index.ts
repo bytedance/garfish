@@ -2,8 +2,8 @@ import { interfaces } from '@garfish/core';
 import { createKey } from '@garfish/utils';
 import router, {
   initRedirect,
-  listenRouterAndReDirect,
   RouterInterface,
+  listenRouterAndReDirect,
 } from './context';
 
 declare module '@garfish/core' {
@@ -46,6 +46,7 @@ export default function Router(_args?: Options) {
     return {
       name: 'router',
       version: __VERSION__,
+
       bootstrap(options: interfaces.Options) {
         let activeApp = null;
         const unmounts: Record<string, Function> = {};
@@ -130,18 +131,15 @@ export default function Router(_args?: Options) {
           notMatch: onNotMatchRouter,
           apps: appList,
         };
-
         listenRouterAndReDirect(listenOptions);
       },
 
       registerApp(appInfos) {
         // Has been running after adding routing to trigger the redirection
         if (!Garfish.running) return;
-
         const appList = Object.values(appInfos);
-
+        // @ts-ignore
         router.registerRouter(appList.filter((app) => !!app.activeWhen));
-
         // After completion of the registration application, trigger application mount
         initRedirect();
       },
